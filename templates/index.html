@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MIRA AI.</title>
+  <style>
+    :root {
+      --mira-green: #B6FFDE;
+      --base-black: #0f0f0f;
+      --error-red: #dc3545;
+      --success-green: #28a745;
+      --white: #ffffff;
+      --gray-text: #bbbbbb;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      background-color: var(--base-black);
+      color: var(--mira-green);
+      margin: 0;
+      padding: 20px;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+      color: var(--mira-green);
+    }
+
+    form {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    input[type="text"] {
+      width: 70%;
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: 1px solid var(--mira-green);
+      background-color: #1f1f1f;
+      color: var(--white);
+    }
+
+    button {
+      padding: 12px 25px;
+      font-size: 16px;
+      margin-left: 10px;
+      border: none;
+      background-color: var(--mira-green);
+      color: var(--base-black);
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .answer-box {
+      padding: 15px;
+      margin: 10px auto;
+      width: 80%;
+      border-radius: 6px;
+      background-color: #1c1c1c;
+      color: var(--white);
+      transition: background-color 0.3s ease;
+    }
+
+    .match {
+      background-color: #203a2e;
+      border-left: 5px solid var(--success-green);
+    }
+
+    .mismatch {
+      background-color: #3a1c1c;
+      border-left: 5px solid var(--error-red);
+    }
+
+    #final-answer {
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+      margin-top: 30px;
+    }
+
+    .green-box {
+      background-color: #203a2e;
+      color: var(--mira-green);
+      border-left: 5px solid var(--success-green);
+      padding: 10px;
+      width: 80%;
+      margin: 20px auto;
+      border-radius: 6px;
+    }
+
+    .red-box {
+      background-color: #3a1c1c;
+      color: var(--error-red);
+      border-left: 5px solid var(--error-red);
+      padding: 10px;
+      width: 80%;
+      margin: 20px auto;
+      border-radius: 6px;
+    }
+
+    .answer-box p {
+      font-style: italic;
+      color: var(--gray-text);
+    }
+
+    .loading p::after {
+      content: ' ⏳';
+      animation: blink 1s steps(2, start) infinite;
+    }
+
+    @keyframes blink {
+      to {
+        visibility: hidden;
+      }
+    }
+
+    strong {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--mira-green);
+    }
+  </style>
+</head>
+<body>
+  <h1>MIRA AI.</h1>
+
+  <form id="ask-form">
+    <input type="text" id="question-input" placeholder="Ask a question..." required />
+    <button type="submit">Ask</button>
+  </form>
+
+  <div id="responses"></div>
+  <div id="final-answer"></div>
+
+  <script>
+    const models = ["Groq", "Gemini", "Mistral"];
+    const form = document.getElementById("ask-form");
+    const input = document.getElementById("question-input");
+    const responsesDiv = document.getElementById("responses");
+    const finalDiv = document.getElementById("final-answer");
+
+    form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+
+      const question = input.value.trim();
+      if (!question) return;
+
+      responsesDiv.innerHTML = "";
+      finalDiv.innerHTML = "";
+      finalDiv.className = "";
+
+      const answers = {};
+
+      models.forEach(model => {
+        const box = document.createElement("div");
+        box.className = "answer-box loading";
+        box.id = `${model}-box`;
+        box.innerHTML = `<strong>${model}:</strong><p>Loading...</p>`;
+        responsesDiv.appendChild(box);
+      });
+
+      for (const model of models) {
+        try {
+          const res = await fetch("/api/ask_ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, question })
+          });
+          const data = await res.json();
+          const answer = data.answer || "Error from model";
+          answers[model] = answer;
+
+          const box = document.getElementById(`${model}-box`);
+          box.classList.remove("loading");
+          box.innerHTML = `<strong>${model}:</strong><p>${answer}</p>`;
+        } catch (err) {
+          const box = document.getElementById(`${model}-box`);
+          box.classList.remove("loading");
+          box.innerHTML = `<strong>${model}:</strong><p>Error: ${err.message}</p>`;
+        }
+      }
+
+      finalDiv.className = "";
+      finalDiv.innerHTML = `<p><strong>Waiting for final answer...</strong></p>`;
+
+      try {
+        const verifyRes = await fetch("/api/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, answers })
+        });
+        const verifyData = await verifyRes.json();
+        const final = verifyData.final || "❌ No consensus.";
+        finalDiv.className = final.includes("✅") ? "green-box" : "red-box";
+        finalDiv.textContent = final;
+
+        const finalAnswerText = final.replace("✅ Final Answer:", "").trim();
+
+        for (const model of models) {
+          const box = document.getElementById(`${model}-box`);
+          const modelAnswer = answers[model];
+
+          const matchRes = await fetch("/api/semantic_match", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ answer: modelAnswer, final: finalAnswerText })
+          });
+
+          const matchData = await matchRes.json();
+          const verdict = matchData.verdict || "";
+
+          if (verdict.includes("✅")) {
+            box.classList.add("match");
+          } else {
+            box.classList.add("mismatch");
+          }
+        }
+
+      } catch (e) {
+        finalDiv.className = "red-box";
+        finalDiv.textContent = `❌ Verification failed: ${e.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
